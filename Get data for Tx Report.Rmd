@@ -1,0 +1,152 @@
+---
+title: "Get data for Tax Report"
+output: html_notebook
+---
+
+This file is used to get the data for the Tax Report. It gets the data from:
+a. The files from the batcht v9.
+b. The API from the site.
+
+## a) Get Data from batch v9.
+
+```{r READ FILES}
+IND = read.csv("GovData360IND_Enviov9.csv")
+Data.a = read.csv("GovData360_Envio v9.csv")
+library(dplyr)
+```
+
+```{r FILTER}
+IND = IND %>% filter(Report == 'Yes')
+Data.a = Data.a[(Data.a$Indicator_Code %in% IND$Indicator_Code), ]
+unique(Data.a$Indicator_Code)
+```
+We need in the table the variables Value type and units. 
+
+```{r Merge IND and values file}
+Data.a = merge(Data.a, IND[, c(2,10,11,12)], by = 'Indicator_Code', all.x = T)
+```
+
+
+From the Data.a file it only match with those with overlap = GOV. I will have to query the rest from the API. Continue reading...
+
+## b) Get Data from API
+
+```{r}
+library(data360r)
+df_indicators <- get_metadata360(site="gov", metadata_type = "indicators")
+List.of.ind.API = c('435', '28821', '24840', '437', '433', '433', '302', '24952', '281', '307', '306', '636', '635', '638', '637')
+
+Data.b.wide <- get_data360(indicator_id= List.of.ind.API)
+```
+
+This data is in wide format. Let's transform it to long.
+
+```{r}
+library(reshape2)
+Data.b.Long = melt(Data.b.wide, id.vars = c("Country ISO3", "Country Name", "Indicator", "Subindicator Type"))
+Data.b = Data.b.Long
+```
+
+## Join both table
+
+First, we will have to format them so they have the same format. We will use the format of the API as the standard.
+
+```{r}
+#Data.a
+Data.a$X = NULL
+Data.a$Indicator_Id.old. = NULL
+Data.a$indicator = NULL
+Data.a$subset = NULL
+Data.a$group = NULL
+Data.a$Indicator_Name = NULL
+Data.a$Indicator_Id = NULL
+Data.a$dataset = NULL
+Data.a$Value_Type_Slug = NULL
+Data.a$Units = NULL
+#Rename columns
+colnames(Data.a)[4] = 'Indicator'
+colnames(Data.a)[2] = 'Country ISO3'
+colnames(Data.a)[7] = 'Subindicator Type'
+
+# Data.b
+Data.b$answer = ''
+Data.b$Indicator_Code = ''
+colnames(Data.b)[5] = 'year'
+Data.b$`Country Name` = NULL
+
+Data.b$year[Data.b$year == '2007-2008'] = '2008'
+Data.b$year[Data.b$year == '2008-2009'] = '2009'
+Data.b$year[Data.b$year == '2009-2010'] = '2010'
+Data.b$year[Data.b$year == '2010-2011'] = '2011'
+Data.b$year[Data.b$year == '2011-2012'] = '2012'
+Data.b$year[Data.b$year == '2012-2013'] = '2013'
+Data.b$year[Data.b$year == '2013-2014'] = '2014'
+Data.b$year[Data.b$year == '2014-2015'] = '2015'
+Data.b$year[Data.b$year == '2015-2016'] = '2016'
+Data.b$year[Data.b$year == '2016-2017'] = '2017'
+Data.b$year[Data.b$year == '2017-2018'] = '2018'
+
+setdiff(colnames(Data.a), colnames(Data.b))
+setdiff(colnames(Data.b), colnames(Data.a))
+
+Data.b = Data.b[ , c("Indicator_Code", "Country ISO3", "year", "Indicator", "answer", "value", "Subindicator Type")]
+
+library(gtools)
+
+Data.b$Indicator_Code = as.character(Data.b$Indicator_Code)
+Data.b$`Country ISO3` = as.factor(Data.b$`Country ISO3`)
+Data.b$year = as.character(Data.b$year)
+Data.a$Indicator_Code = as.factor(Data.a$Indicator_Code)
+Data.a$Indicator = as.character(Data.a$Indicator)
+
+Data = smartbind(Data.a, Data.b)
+
+#Drop values = NA
+Data = Data[is.na(Data$value) != T,]
+#Drop values = NA
+Data = Data[Data$year != 'NA',]
+```
+
+
+```{r}
+Data$Indicator = as.character(Data$Indicator)
+Data$Indicator_Code[Data$Indicator == 'Paying Taxes: Payments number per year'] = 'DB42'
+Data$Indicator_Code[Data$Indicator == 'Paying Taxes: Postfiling'] = 'DB43'
+Data$Indicator_Code[Data$Indicator == 'Paying Taxes: Time hours per year'] = 'DB45'
+Data$Indicator_Code[Data$Indicator == 'Paying Taxes: Total tax rate % of profit'] = 'DB46'
+Data$Indicator_Code[Data$Indicator == 'Paying Taxes'] = 'DB48'
+Data$Indicator_Code[Data$Indicator == 'Regulations and Taxes / If there were visits average number of visits or required meetings with tax officials'] = 'ES28'
+Data$Indicator_Code[Data$Indicator == 'Regulations and Taxes / Number of visits or required meetings with tax officials'] = 'ES40' 
+Data$Indicator_Code[Data$Indicator == 'Corruption / Percent of firms expected to give gifts in meetings with tax officials'] = 'ES45'
+Data$Indicator_Code[Data$Indicator == 'Regulations and Taxes / Percent of firms identifying tax administration as a major constraint'] = 'ES66'
+Data$Indicator_Code[Data$Indicator == 'Regulations and Taxes / Percent of firms identifying tax rates as a major constraint'] = 'ES67'
+Data$Indicator_Code[(Data$Indicator == 'Effect of taxation on incentives to invest') & (Data$`Subindicator Type` == 'Rank')] = 'GCI94.1'
+Data$Indicator_Code[(Data$Indicator == 'Effect of taxation on incentives to invest') & (Data$`Subindicator Type` == 'Value')] = 'GCI94.2'
+
+Data$Indicator_Code[(Data$Indicator == 'Total tax rate % profits') & (Data$`Subindicator Type` == 'Rank')] = 'GCI95.1'
+Data$Indicator_Code[(Data$Indicator == 'Total tax rate % profits') & (Data$`Subindicator Type` == 'Value')] = 'GCI95.2'
+
+# In order to read without problems from Tableau...
+Data$year = paste0("01/01/", Data$year)
+```
+
+## Validation
+
+```{r}
+str(Data)
+a = Data[is.na(Data$Indicator_Code) == T, ]
+a = Data[is.na(Data$`Country ISO3`) == T, ]
+a = Data[is.na(Data$Indicator) == T, ]
+a = Data[is.na(Data$answer) == T, ]
+a = Data[is.na(Data$value) == T, ]
+a = Data[is.na(Data$`Subindicator Type`) == T, ]
+Dup = Data[(duplicated(Data[ , -7])) == T, ]
+```
+
+```{r}
+write.csv(Data, "Data.csv")
+```
+
+
+
+
